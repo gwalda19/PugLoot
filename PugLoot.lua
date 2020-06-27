@@ -13,6 +13,8 @@ reset_roll_state()
 local ui_button_random = nil
 local ui_button_start = nil
 
+local do_start_roll
+local de_item = false
 
 -- Determines which type of announcement should be made.
 local get_announce_target = function (is_roll_msg)
@@ -48,6 +50,8 @@ local do_finish_roll = function ()
   local max_roll = 0
   local highest_rollers = {}
   local sorted_rolls = {}
+  local no_rollers = false
+  local item = roll_state.rolling_item
 
   for name, roll in pairs(roll_state.member_rolls) do
     if roll > max_roll then
@@ -67,6 +71,8 @@ local do_finish_roll = function ()
 
   if #highest_rollers == 0 then
     SendChatMessage('{rt7} Nobody rolled for ' .. roll_state.rolling_item .. '!', get_announce_target(false), nil, nil)
+    no_rollers = true
+    item = roll_state.rolling_item
   elseif #highest_rollers == 1 then
     SendChatMessage('{rt4} ' .. highest_rollers[1] .. ' wins ' .. roll_state.rolling_item .. ' with a ' .. max_roll, get_announce_target(false), nil, nil)
   else
@@ -103,6 +109,18 @@ local do_finish_roll = function ()
   end
 
   reset_roll_state()
+
+  -- if no one rolled on the item, do another roll for the offspec people.
+  if no_rollers then
+    -- if no one rolled during the offspec, then DE the item.
+    if de_item then
+      de_item = false
+      SendChatMessage('Disenchanting ' .. item, get_announce_target(false), nil, nil)
+    else
+      de_item = true
+      do_start_roll(item, 15, 'OS')
+    end
+  end
 end
 
 -- Callback function for every tick of the timer.
@@ -129,7 +147,7 @@ local handle_tick = function ()
 end
 
 -- Starts the roll countdown on the item.
-local do_start_roll = function (item_link, duration)
+do_start_roll = function (item_link, duration, roll_type)
   roll_state.rolling_item = item_link
   roll_state.num_members = GetNumGroupMembers()
 
@@ -139,7 +157,7 @@ local do_start_roll = function (item_link, duration)
     table.insert(roll_state.members, name)
   end
 
-  SendChatMessage('ROLL ' .. item_link .. ' (' .. tostring(duration) .. ' seconds)', get_announce_target(true), nil, nil)
+  SendChatMessage(roll_type .. ' ROLL ' .. item_link .. ' (' .. tostring(duration) .. ' seconds)', get_announce_target(true), nil, nil)
 
   -- Change the start button to the cancel button.
   if ui_button_start then
@@ -236,7 +254,7 @@ local handle_loot_button = function (kind)
     end
   elseif kind == 'START' then
     if not roll_state.rolling_item then
-      do_start_roll(link, 15)
+      do_start_roll(link, 15, 'MS')
     else
       do_cancel_roll()
     end
@@ -330,7 +348,7 @@ SlashCmdList["PUGLOOT"] = function (arg_str)
     end
   elseif cmd == 'start' and rest then
     if not roll_state.rolling_item then
-      do_start_roll(rest, 15)
+      do_start_roll(rest, 15, 'MS')
     else
       print('There is an ongoing roll for ' .. roll_state.rolling_item)
     end
