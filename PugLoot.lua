@@ -13,7 +13,10 @@ reset_roll_state()
 local ui_button_random = nil
 local ui_button_start = nil
 
+local do_start_roll
+local de_item = false
 
+-- Determines which type of announcement should be made.
 local get_announce_target = function (is_roll_msg)
   if IsInRaid() then
     if is_roll_msg and (UnitIsGroupLeader('player') or UnitIsGroupAssistant('player')) then
@@ -26,6 +29,7 @@ local get_announce_target = function (is_roll_msg)
   end
 end
 
+-- Randomly chooses a member in the group for the item.
 local do_random_loot = function (item_link)
   roll_state.rolling_item = item_link
   roll_state.num_members = GetNumGroupMembers()
@@ -40,10 +44,14 @@ local do_random_loot = function (item_link)
   RandomRoll(1, roll_state.num_members)
 end
 
+-- Called when the time has ended for group members to roll.
+-- Processes all the rolls to determine the winner.
 local do_finish_roll = function ()
   local max_roll = 0
   local highest_rollers = {}
   local sorted_rolls = {}
+  local no_rollers = false
+  local item = roll_state.rolling_item
 
   for name, roll in pairs(roll_state.member_rolls) do
     if roll > max_roll then
@@ -63,6 +71,8 @@ local do_finish_roll = function ()
 
   if #highest_rollers == 0 then
     SendChatMessage('{rt7} Nobody rolled for ' .. roll_state.rolling_item .. '!', get_announce_target(false), nil, nil)
+    no_rollers = true
+    item = roll_state.rolling_item
   elseif #highest_rollers == 1 then
     SendChatMessage('{rt4} ' .. highest_rollers[1] .. ' wins ' .. roll_state.rolling_item .. ' with a ' .. max_roll, get_announce_target(false), nil, nil)
   else
@@ -88,17 +98,32 @@ local do_finish_roll = function ()
     SendChatMessage(summary, get_announce_target(false), nil, nil)
   end
 
+  -- Re-enable the start button.
   if ui_button_start then
     ui_button_start:SetText('Start roll')
   end
 
+  -- Re-enable the random button.
   if ui_button_random then
     ui_button_random:Enable()
   end
 
   reset_roll_state()
+
+  -- if no one rolled on the item, do another roll for the offspec people.
+  if no_rollers then
+    -- if no one rolled during the offspec, then DE the item.
+    if de_item then
+      de_item = false
+      SendChatMessage('Disenchanting ' .. item, get_announce_target(false), nil, nil)
+    else
+      de_item = true
+      do_start_roll(item, 15, 'OS')
+    end
+  end
 end
 
+-- Callback function for every tick of the timer.
 local handle_tick = function ()
   if not roll_state.ticker then
     -- roll was cancelled, shouldn't be reachable but just in case
@@ -107,10 +132,13 @@ local handle_tick = function ()
 
   local iter = roll_state.ticker._remainingIterations - 1
 
+  -- Update the cancel button to include how much time is left.
   if ui_button_start then
     ui_button_start:SetText('Cancel (' .. tostring(iter) .. ')')
   end
 
+  -- If this is the last tick of the timer, determine the winner.
+  -- Otherwise announce to the group how much time is left to roll.
   if iter == 0 then
     do_finish_roll()
   elseif iter <= 3 then
@@ -118,25 +146,31 @@ local handle_tick = function ()
   end
 end
 
-local do_start_roll = function (item_link, duration)
+-- Starts the roll countdown on the item.
+do_start_roll = function (item_link, duration, roll_type)
   roll_state.rolling_item = item_link
   roll_state.num_members = GetNumGroupMembers()
 
+  -- Add all group members to a local table.
   for n = 1, roll_state.num_members do
     local name = GetRaidRosterInfo(n)
     table.insert(roll_state.members, name)
   end
 
-  SendChatMessage('ROLL ' .. item_link .. ' (' .. tostring(duration) .. ' seconds)', get_announce_target(true), nil, nil)
+  SendChatMessage(roll_type .. ' ROLL ' .. item_link .. ' (' .. tostring(duration) .. ' seconds)', get_announce_target(true), nil, nil)
 
+  -- Change the start button to the cancel button.
   if ui_button_start then
     ui_button_start:SetText('Cancel (' .. tostring(duration) .. ')')
   end
 
+  -- Disable the random button.
   if ui_button_random then
     ui_button_random:Disable()
   end
 
+  -- Creates the timer that will announce the winner when it is up.
+  -- Each tick of the timer is set to 1 second.
   roll_state.ticker = C_Timer.NewTicker(1, handle_tick, duration)
 end
 
@@ -191,6 +225,7 @@ local handle_system_msg = function (msg)
   end
 end
 
+-- Cancels the roll being done.
 local do_cancel_roll = function ()
   if roll_state.ticker then
     roll_state.ticker:Cancel()
@@ -208,6 +243,7 @@ local do_cancel_roll = function ()
   reset_roll_state()
 end
 
+-- Function called when the user chooses random or start the roll.
 local handle_loot_button = function (kind)
   local slot = LootFrame.selectedSlot
   local link = GetLootSlotLink(slot)
@@ -218,13 +254,14 @@ local handle_loot_button = function (kind)
     end
   elseif kind == 'START' then
     if not roll_state.rolling_item then
-      do_start_roll(link, 15)
+      do_start_roll(link, 15, 'MS')
     else
       do_cancel_roll()
     end
   end
 end
 
+-- Gives additional optiions to the master looter frame.
 local update_master_loot_frame = function ()
   if ui_button_random then
     return
@@ -284,7 +321,7 @@ frame:SetScript('OnEvent', function (self, event, ...)
   end
 end)
 
-
+-- Define the options when the user types /pugloot
 SLASH_PUGLOOT1 = "/pugloot"
 SlashCmdList["PUGLOOT"] = function (arg_str)
   if not IsInRaid() and not IsInGroup() then
@@ -311,7 +348,7 @@ SlashCmdList["PUGLOOT"] = function (arg_str)
     end
   elseif cmd == 'start' and rest then
     if not roll_state.rolling_item then
-      do_start_roll(rest, 15)
+      do_start_roll(rest, 15, 'MS')
     else
       print('There is an ongoing roll for ' .. roll_state.rolling_item)
     end
